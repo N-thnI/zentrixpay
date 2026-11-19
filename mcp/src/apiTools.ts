@@ -9,6 +9,7 @@
 
 import { assertWithinSessionSpendLimit, recordSessionSpend } from "./paymentCeiling.js";
 import { ZENTRIXPAY_CALL_OUTPUT_SCHEMA } from "./outputSchemas.js";
+import { pickSafeResponseHeaders } from "./responseHeaders.js";
 import type { ToolDefinition } from "./tools.js";
 import type { ApiResponse } from "./apiResponse.js";
 
@@ -149,7 +150,7 @@ export const API_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "zentrixpay_call",
     description:
-      "Call a pay-per-call API, paying its per-call price in USDC via x402 from the agent wallet. The caller is not charged when the API returns an error (status >= 400) or times out. Calls above ZENTRIXPAY_MAX_AUTO_PAY_USDC need maxAutoPayUsdc.",
+      "Call a pay-per-call API, paying its per-call price in USDC via x402 from the agent wallet. The caller is not charged when the API returns an error (status >= 400) or times out. Calls above ZENTRIXPAY_MAX_AUTO_PAY_USDC need maxAutoPayUsdc. The result includes an allowlisted set of safe response headers (pagination, retry, caching, rate limits); cookies, hop-by-hop and payment headers are never returned.",
     inputSchema: {
       type: "object",
       properties: {
@@ -568,6 +569,7 @@ export function createApiToolHandler(
       amount: charged ? `${api.price} USDC` : "0 USDC (not charged: the call failed)",
       txHash,
       contentType,
+      headers: pickSafeResponseHeaders(res.headers),
       body: bodyPayload,
     });
   }

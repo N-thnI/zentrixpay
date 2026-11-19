@@ -116,3 +116,56 @@ describe("provider tools", () => {
     ).rejects.toThrow(/together/);
   });
 });
+
+describe("zentrixpay_call safe response headers (#146)", () => {
+  it("returns allowlisted pagination, retry and caching headers", async () => {
+    const upstream = new Response("[]", {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        link: '<https://api.test/items?page=2>; rel="next"',
+        "x-total-count": "42",
+        "retry-after": "30",
+        etag: '"abc123"',
+        "x-ratelimit-remaining": "99",
+      },
+    });
+    const { handle } = setup({}, upstream);
+    const out = JSON.parse(await handle("zentrixpay_call", { apiId: "api1" }));
+    expect(out.headers).toEqual({
+      link: '<https://api.test/items?page=2>; rel="next"',
+      "x-total-count": "42",
+      "retry-after": "30",
+      etag: '"abc123"',
+      "x-ratelimit-remaining": "99",
+    });
+  });
+
+  it("excludes cookies, hop-by-hop and payment challenge headers", async () => {
+    const upstream = new Response("ok", {
+      status: 200,
+      headers: {
+        "set-cookie": "session=secret; HttpOnly",
+        connection: "keep-alive, x-request-id",
+        "keep-alive": "timeout=5",
+        "x-request-id": "listed-in-connection",
+        "payment-required": "challenge",
+        "payment-response": '{"transaction":"tx1"}',
+        "x-payment-response": '{"transaction":"tx1"}',
+        "www-authenticate": "Payment",
+        "x-upstream-secret": "nope",
+        "cache-control": "no-store",
+      },
+    });
+    const { handle } = setup({}, upstream);
+    const out = JSON.parse(await handle("zentrixpay_call", { apiId: "api1" }));
+    expect(out.headers).toEqual({ "cache-control": "no-store" });
+    expect(out.txHash).toBe("tx1");
+  });
+
+  it("returns an empty object when no safe headers are present", async () => {
+    const { handle } = setup();
+    const out = JSON.parse(await handle("zentrixpay_call", { apiId: "api1" }));
+    expect(out.headers).toEqual({});
+  });
+});

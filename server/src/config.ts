@@ -13,6 +13,15 @@ const envSchema = z.object({
   STELLAR_NETWORK: z.enum(["testnet", "mainnet"]).default("testnet"),
   NETWORK: z.string().min(1),
   FACILITATOR_URL: z.string().default("https://www.x402.org/facilitator"),
+  // Readiness probe for the x402 facilitator (#133): a read-only GET of
+  // `${FACILITATOR_URL}/supported`, bounded by this timeout. It never starts a
+  // payment. Set READINESS_REQUIRE_FACILITATOR=false to report the check
+  // without failing readiness (e.g. a deployment that serves no paid calls).
+  FACILITATOR_HEALTH_TIMEOUT_MS: z.coerce.number().int().min(100).max(30_000).default(2_000),
+  READINESS_REQUIRE_FACILITATOR: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
   USDC_CONTRACT_ID: z.string().min(1),
 
   // Soroban

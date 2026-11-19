@@ -449,6 +449,8 @@ async function proxyHandler(req: Request, res: Response) {
     const callId = randomUUID();
     recordApiCall({
       callId,
+      apiId: api.id,
+      charged,
       payerAddress: (res.locals.creditPayer as string | undefined) ?? payerFrom(req, settlement),
       amount: (res.locals.apiCallPrice as string | undefined) ?? api.price,
       method: req.method,
@@ -459,9 +461,10 @@ async function proxyHandler(req: Request, res: Response) {
       responseStatus: res.statusCode,
       durationMs: Date.now() - started,
     }).catch((err) =>
+      // Only reached when the recovery spool itself could not be written (#134).
       getLogger().error(
-        { event: "api_call_record_failed", apiId: api.id, err },
-        "failed to record API call",
+        { event: "api_call_record_lost", apiId: api.id, callId, err },
+        "failed to record or spool API call",
       ),
     );
   });

@@ -144,6 +144,13 @@ const envSchema = z.object({
     .default(180),
   API_CALL_RETENTION_INTERVAL_MS: z.coerce.number().int().min(0).default(3_600_000),
   API_CALL_RETENTION_BATCH_SIZE: z.coerce.number().int().min(1).max(10_000).default(1_000),
+
+  // Recovery of api_calls rows whose insert failed (#134,
+  // docs/api-call-recovery.md). Failed rows are spooled to
+  // API_CALL_OUTBOX_DIR and retried every API_CALL_RECOVERY_INTERVAL_MS
+  // (0 disables the worker; spooled rows then wait for the next start).
+  API_CALL_OUTBOX_DIR: z.string().min(1).default("./data/api-call-outbox"),
+  API_CALL_RECOVERY_INTERVAL_MS: z.coerce.number().int().min(0).default(30_000),
 });
 
 const parsed = envSchema.safeParse(envWithDefaults);

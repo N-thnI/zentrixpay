@@ -9,6 +9,15 @@ import { sendUpstream } from "../lib/upstreamClient.js";
 import { createTtlCache } from "../lib/ttlCache.js";
 import type { apiCatalogSortValues } from "../schemas/requests.js";
 import { statsWhere, type RecentCallsOptions, type StatsRange } from "./apiStatsQuery.js";
+import {
+  FileApiCallRecordOutbox,
+  createApiCallRecorder,
+  postgresApiCallRecordStore,
+  type ApiCallRecord,
+  type ApiCallRecorder,
+} from "./apiCallRecorder.js";
+import { apiCallRecordsPending } from "../lib/metrics.js";
+import { logger as rootLogger } from "../lib/logger.js";
 
 export { statsWhere, type RecentCallsOptions, type StatsRange } from "./apiStatsQuery.js";
 
@@ -734,4 +743,32 @@ export async function getApiTimeSeries(
     result.push({ date: dateStr, calls: row?.calls ?? 0, revenue: row?.revenue ?? "0" });
   }
   return result;
+}
+// ── API-call records (#134) ─────────────────────────────────────────────────
+
+let callRecorder: ApiCallRecorder | null = null;
+
+/** Shared recorder: database first, durable outbox on failure. */
+export function getApiCallRecorder(): ApiCallRecorder {
+  callRecorder ??= createApiCallRecorder({
+    store: postgresApiCallRecordStore(db as never),
+    outbox: new FileApiCallRecordOutbox(config.API_CALL_OUTBOX_DIR),
+    logger: rootLogger,
+    onPending: (pending) => apiCallRecordsPending.set(pending),
+  });
+  return callRecorder;
+}
+
+/**
+ * Record one proxied call. A failed insert is spooled and retried by the
+ * recovery worker, so the row is not lost; this rejects only when the spool
+ * itself cannot be written.
+ */
+export async function recordApiCall(
+  call: Omit<ApiCallRecord, "createdAt"> & { createdAt?: string },
+): Promise<void> {
+  await getApiCallRecorder().record({
+    ...call,
+    createdAt: call.createdAt ?? new Date().toISOString(),
+  });
 }

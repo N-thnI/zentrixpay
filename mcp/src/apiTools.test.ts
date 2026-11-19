@@ -169,3 +169,54 @@ describe("zentrixpay_call safe response headers (#146)", () => {
     expect(out.headers).toEqual({});
   });
 });
+
+describe("zentrixpay_api_stats range and paging (#143)", () => {
+  it("forwards from, to, limit and offset as query parameters", async () => {
+    const jsonFetch = vi.fn(async () => ({ ok: true, status: 200, data: { calls: 0 } }));
+    const { handle } = setup({ jsonFetch });
+    await handle("zentrixpay_api_stats", {
+      apiId: "api1",
+      from: "2026-01-01",
+      to: "2026-02-01",
+      limit: 10,
+      offset: 20,
+    });
+    expect(jsonFetch).toHaveBeenCalledWith(
+      "http://gw.test/apis/api1/stats?from=2026-01-01&to=2026-02-01&limit=10&offset=20",
+      { headers: { "x-api-key": "key" } },
+    );
+  });
+
+  it("keeps the plain URL when no optional arguments are given", async () => {
+    const jsonFetch = vi.fn(async () => ({ ok: true, status: 200, data: {} }));
+    const { handle } = setup({ jsonFetch });
+    await handle("zentrixpay_api_stats", { apiId: "api1" });
+    expect(jsonFetch).toHaveBeenCalledWith("http://gw.test/apis/api1/stats", {
+      headers: { "x-api-key": "key" },
+    });
+  });
+
+  it("rejects invalid paging arguments before calling the server", async () => {
+    const jsonFetch = vi.fn();
+    const { handle } = setup({ jsonFetch });
+    await expect(handle("zentrixpay_api_stats", { apiId: "api1", limit: -1 })).rejects.toThrow(
+      /limit must be a non-negative integer/,
+    );
+    await expect(handle("zentrixpay_api_stats", { apiId: "api1", offset: "5" })).rejects.toThrow(
+      /offset must be a non-negative integer/,
+    );
+    expect(jsonFetch).not.toHaveBeenCalled();
+  });
+
+  it("surfaces server-side validation errors", async () => {
+    const jsonFetch = vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      data: { error: { from: ["from must not be after to"] } },
+    }));
+    const { handle } = setup({ jsonFetch });
+    await expect(
+      handle("zentrixpay_api_stats", { apiId: "api1", from: "2026-02-01", to: "2026-01-01" }),
+    ).rejects.toThrow(/Invalid stats query/);
+  });
+});

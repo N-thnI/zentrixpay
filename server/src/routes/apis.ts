@@ -6,6 +6,7 @@ import express, {
   type Request,
   type Response,
 } from "express";
+import multer from "multer";
 import { apiKeyAuth } from "../middleware/apiKeyAuth.js";
 import { requestSignatureAuth } from "../middleware/requestSignatureAuth.js";
 import { payeeSignatureAuth } from "../middleware/payeeSignatureAuth.js";
@@ -62,7 +63,7 @@ import { filterRequestHeaders, filterResponseHeaders } from "../lib/proxyHeaders
 import { paymentHeader, paymentHeaderHash, payerFromPayment } from "../lib/payer.js";
 import {
   getProxyIdempotencyStore,
-  proxyIdempotencyCacheKey,
+  type ProxyIdempotencyKey,
   type StoredProxyResponse,
 } from "../lib/idempotency.js";
 import { deliverChargedCallWebhook } from "../services/webhookService.js";
@@ -71,8 +72,10 @@ import { stroopsToUsdc, usdcToStroops } from "../utils/usdc.js";
 import { getLogger } from "../lib/logger.js";
 import { config, upstreamKeyRing } from "../config.js";
 import { ProxyBufferSemaphore, proxyBufferConcurrency } from "../middleware/proxyBuffer.js";
+import { importBulkOpenApi, previewBulkOpenApi } from "../services/openApiImport.js";
 
 const router = Router();
+const openApiUpload = multer({ limits: { fileSize: 512 * 1024, files: 1 } });
 
 function apiCreditBundlePrice(api: ApiRow, calls: number): string {
   const highestCallPrice = (api.priceRules ?? []).reduce((highest, rule) => {
@@ -91,6 +94,38 @@ function sendServiceError(res: Response, err: unknown): void {
 }
 
 // ── Management ────────────────────────────────────────────────────────────────
+
+// POST /apis/import/preview — validate and group an OpenAPI JSON/YAML document without writes.
+router.post("/apis/import/preview", apiKeyAuth, openApiUpload.single("document"), async (req, res) => {
+  const raw = req.file?.buffer.toString("utf8") ?? req.body?.document ?? req.body?.openapiSpec;
+  if (!raw) {
+    res.status(400).json({ error: "Provide document as JSON/YAML text, document, or openapiSpec" });
+    return;
+  }
+  const result = previewBulkOpenApi(raw);
+  res.status(result.errors.length > 0 ? 422 : 200).json({ groups: result.groups, errors: result.errors });
+});
+
+// POST /apis/import — confirm selected preview groups and register them atomically.
+router.post("/apis/import", apiKeyAuth, openApiUpload.single("document"), async (req, res) => {
+  const raw = req.file?.buffer.toString("utf8") ?? req.body?.document ?? req.body?.openapiSpec;
+  const defaults = req.body?.defaults ?? req.body;
+  if (!raw || typeof defaults?.price !== "string") {
+    res.status(400).json({ error: "document and defaults.price are required; walletAddress defaults to the publisher wallet" });
+    return;
+  }
+  const selected = Array.isArray(req.body?.groups) ? req.body.groups : undefined;
+  try {
+    const result = await importBulkOpenApi(req.publisher!.id, raw, selected, {
+      price: defaults.price,
+      walletAddress: defaults.walletAddress ?? req.publisher!.walletAddress,
+      description: defaults.description,
+    });
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(422).json({ error: error instanceof Error ? error.message : "OpenAPI import failed" });
+  }
+});
 
 // POST /apis — register an API to sell per call (authenticated)
 router.post(
@@ -484,7 +519,7 @@ async function proxyHandler(req: Request, res: Response) {
   // this handler runs. If the upstream fails before the first byte we never
   // write a 2xx status to the caller, so the caller is not charged
   // (see the "finish" listener above — charged = statusCode < 400).
-  if (api.streamingEnabled) {
+  if ("streamingEnabled" in api && api.streamingEnabled) {
     let upstream;
     try {
       upstream = await streamUpstream(upstreamOpts);
@@ -569,6 +604,18 @@ async function proxyHandler(req: Request, res: Response) {
     body: upstream.body,
   } satisfies StoredProxyResponse;
 
+  const completeProxyIdempotency = res.locals.completeProxyIdempotency as
+    | ((response: StoredProxyResponse) => Promise<void>)
+    | undefined;
+  if (completeProxyIdempotency && upstream.status < 400) {
+    res.locals.preserveProxyIdempotencyClaim = true;
+    await completeProxyIdempotency({
+      status: upstream.status,
+      headers: responseHeaders,
+      body: upstream.body,
+    });
+  }
+
   res.status(upstream.status);
   for (const [name, value] of Object.entries(responseHeaders)) res.setHeader(name, value);
   // res.end, not res.send: send() would add an ETag and could turn the reply
@@ -593,6 +640,108 @@ const proxyIpRateLimit = createIpRateLimiter(
 // when capacity is exhausted so the x402 client (and any caller) can retry.
 export const proxyBufferSemaphore = new ProxyBufferSemaphore(config.PROXY_BUFFER_CONCURRENCY);
 const proxyBufferLimit = proxyBufferConcurrency(proxyBufferSemaphore);
+
+async function proxyIdempotency(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const idempotencyKey = req.get("Idempotency-Key");
+  if (!idempotencyKey) {
+    next();
+    return;
+  }
+  if (idempotencyKey.length > 255) {
+    res.status(400).json({ error: "Idempotency-Key must be 255 characters or fewer" });
+    return;
+  }
+
+  const api = res.locals.api as ApiRow;
+  if (api.streamingEnabled) {
+    res.status(409).json({ error: "Idempotency-Key is not supported for streaming APIs" });
+    return;
+  }
+
+  const payment = paymentHeader(req);
+  const payer = payerFromPayment(payment);
+  if (!payment || !payer.address || !payer.signed) {
+    next();
+    return;
+  }
+
+  const key: ProxyIdempotencyKey = {
+    apiId: api.id,
+    payer: payer.address,
+    key: idempotencyKey,
+  };
+  const fingerprint = createHash("sha256")
+    .update(req.method)
+    .update("\n")
+    .update(req.originalUrl)
+    .update("\n")
+    .update(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0))
+    .digest("hex");
+  const paymentHash = paymentHeaderHash(payment);
+  const store = getProxyIdempotencyStore();
+
+  const replayOrConflict = (record: Awaited<ReturnType<typeof store.get>>): boolean => {
+    if (!record) return false;
+    if (record.fingerprint !== fingerprint) {
+      res.status(409).json({ error: "Idempotency-Key was already used for a different request" });
+      return true;
+    }
+    if (record.inProgress || record.paymentHash !== paymentHash || record.response === null) {
+      res.status(409).json({ error: "Idempotency-Key is in use or cannot be replayed" });
+      return true;
+    }
+
+    res.status(record.response.status);
+    for (const [name, value] of Object.entries(record.response.headers)) {
+      res.setHeader(name, value);
+    }
+    res.setHeader("Idempotent-Replayed", "true");
+    res.setHeader("Content-Length", String(record.response.body.length));
+    res.end(record.response.body);
+    return true;
+  };
+
+  try {
+    const existing = await store.get(key);
+    if (replayOrConflict(existing)) return;
+
+    if (!(await store.claim(key, fingerprint))) {
+      const current = await store.get(key);
+      if (!replayOrConflict(current)) {
+        res.status(409).json({ error: "Idempotency-Key is in use" });
+      }
+      return;
+    }
+
+    res.locals.completeProxyIdempotency = async (response: StoredProxyResponse) => {
+      const cacheResponse =
+        response.body.length <= config.PROXY_IDEMPOTENCY_MAX_BODY_BYTES ? response : null;
+      await store.complete(key, {
+        inProgress: false,
+        fingerprint,
+        paymentHash,
+        response: cacheResponse,
+        txHash: null,
+      });
+      res.locals.preserveProxyIdempotencyClaim = false;
+    };
+
+    res.once("finish", () => {
+      if (res.locals.preserveProxyIdempotencyClaim) return;
+      void store
+        .delete(key)
+        .catch((err) =>
+          getLogger().error(
+            { event: "proxy_idempotency_release_failed", apiId: api.id, err },
+            "failed to release proxy idempotency claim",
+          ),
+        );
+    });
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
 
 // Issue #30: POST /api/:id/pass — buy a time-limited access pass via x402.
 // The caller pays passPrice once; subsequent calls are free until the pass
@@ -708,8 +857,8 @@ router.all(
   loadProxiedApi,
   express.raw({ type: () => true, limit: config.PROXY_MAX_REQUEST_BODY }),
   checkPayerAccess,
-  spendSignedApiCredit,
   proxyIdempotency,
+  spendSignedApiCredit,
   apiPaywall,
   proxyHandler,
 );

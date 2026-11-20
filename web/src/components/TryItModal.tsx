@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import { callPaidApi } from "../lib/x402Call.js";
+import { callApi, createFreighterSigner } from "@zentrixpay/client";
+import { createFreighterSigner as createWalletSigner } from "../lib/x402Buy.js";
+import { explorerTxUrl } from "../lib/stellarExplorer.js";
 import type { HttpMethod, PublicApi } from "../api/apis.js";
 import {
   DEFAULT_REQUEST_CONTENT_TYPE,
@@ -125,14 +127,23 @@ export function TryItModal({ api, wallet, onClose }: Props) {
 
     setSending(true);
     try {
-      const response = await callPaidApi(api.proxyUrl, wallet.address, {
+      const response = await callApi(api.proxyUrl, {
+        signer: createFreighterSigner(createWalletSigner(wallet.address, "Test SDF Network ; September 2015")),
+        network: (import.meta.env.VITE_STELLAR_NETWORK === "public" || import.meta.env.VITE_STELLAR_NETWORK === "mainnet" ? "stellar:pubnet" : "stellar:testnet") as "stellar:testnet" | "stellar:pubnet",
         method,
         path,
         body: prepared.body,
         headers: prepared.headers,
-        price: api.price,
       });
-      setResult(response);
+      const transaction = response.payment?.transaction;
+      setResult({
+        status: response.status,
+        charged: response.status < 400 && Boolean(response.payment),
+        price: api.price,
+        contentType: response.headers["content-type"] ?? "",
+        body: response.body,
+        explorerUrl: transaction ? explorerTxUrl(transaction) : undefined,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "The request failed.");
     } finally {

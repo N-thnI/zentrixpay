@@ -2,6 +2,10 @@ import type { NextFunction, Request, Response } from "express";
 import { config } from "../config.js";
 import { apiCreditRequestBodyHash, verifyApiCreditSpendSignature } from "../lib/apiCreditSignature.js";
 import { resolveApiPrice } from "./apiPaywall.js";
+
+// Simple in‑memory store for daily spend limits per wallet per API.
+const DAILY_SPEND_LIMIT = 1000; // hard‑coded limit (in the same units as API price)
+const dailySpendMap = new Map<string, { date: string; amount: number }>();
 import type { ApiRow } from "../db/schema.js";
 import { ApiCreditError, spendApiCredit } from "../services/apiCredits.js";
 
@@ -45,6 +49,28 @@ export async function spendSignedApiCredit(req: Request, res: Response, next: Ne
   }
   if (api.payerAllowlist?.length && !api.payerAllowlist.includes(walletAddress)) {
     return res.status(403).json({ error: "This API is restricted to approved wallets" });
+  }
+
+  // Enforce daily spend limit per wallet per API
+  const price = resolveApiPrice(
+    api,
+    req.method,
+    Array.isArray(req.params.path)
+      ? (req.params.path as string[]).length
+        ? `/${(req.params.path as string[]).join("/")}`
+        : "/"
+      : "/",
+  );
+  const today = new Date().toISOString().slice(0, 10);
+  const key = `${walletAddress}:${api.id}`;
+  const record = dailySpendMap.get(key);
+  if (record && record.date === today) {
+    if (record.amount + price > DAILY_SPEND_LIMIT) {
+      return res.status(403).json({ error: "Daily spend limit reached for this wallet and API" });
+    }
+    record.amount += price;
+  } else {
+    dailySpendMap.set(key, { date: today, amount: price });
   }
 
   try {

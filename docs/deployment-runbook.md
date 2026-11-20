@@ -14,7 +14,7 @@ By the end you will have a working gateway that can register providers, proxy pa
 
 - A GitHub account with access to the ZentrixPay repository.
 - A Postgres provider account (Render Postgres, Neon, Supabase Postgres, etc.).
-- A hosting account on **Render** *or* **Fly.io**.
+- A hosting account on **Render** _or_ **Fly.io**.
 - A static-site host (Render Static Site, Netlify, Vercel, Cloudflare Pages, GitHub Pages).
 - A testnet wallet with a small amount of testnet funds for the facilitator/payee address.
 - `git`, `node` (>= 20), and `pnpm` (or `npm`) installed locally for migrations and builds.
@@ -43,50 +43,50 @@ The server reads the following variables. All are required unless marked optiona
 
 ### Core
 
-| Variable | Description | Testnet example |
-| --- | --- | --- |
-| `NODE_ENV` | Runtime mode. | `production` |
-| `PORT` | Port the server listens on. Most hosts inject this. | `8080` |
-| `DATABASE_URL` | Postgres connection string from step 1. | `postgres://...` |
-| `JWT_SECRET` | Secret used to sign session/API tokens. Generate with `openssl rand -hex 32`. | *(random 64 hex chars)* |
-| `LOG_LEVEL` | Log verbosity (`debug`, `info`, `warn`, `error`). | `info` |
+| Variable       | Description                                                                   | Testnet example         |
+| -------------- | ----------------------------------------------------------------------------- | ----------------------- |
+| `NODE_ENV`     | Runtime mode.                                                                 | `production`            |
+| `PORT`         | Port the server listens on. Most hosts inject this.                           | `8080`                  |
+| `DATABASE_URL` | Postgres connection string from step 1.                                       | `postgres://...`        |
+| `JWT_SECRET`   | Secret used to sign session/API tokens. Generate with `openssl rand -hex 32`. | _(random 64 hex chars)_ |
+| `LOG_LEVEL`    | Log verbosity (`debug`, `info`, `warn`, `error`).                             | `info`                  |
 
 ### Chain / Network
 
-| Variable | Description | Testnet example |
-| --- | --- | --- |
-| `CHAIN_ID` | EVM chain ID of the target network. | `84532` (Base Sepolia) |
-| `RPC_URL` | JSON-RPC endpoint for the target chain. | `https://sepolia.base.org` |
+| Variable       | Description                                                 | Testnet example                              |
+| -------------- | ----------------------------------------------------------- | -------------------------------------------- |
+| `CHAIN_ID`     | EVM chain ID of the target network.                         | `84532` (Base Sepolia)                       |
+| `RPC_URL`      | JSON-RPC endpoint for the target chain.                     | `https://sepolia.base.org`                   |
 | `USDC_ADDRESS` | Address of the testnet USDC (or equivalent) token contract. | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
 
 ### x402 Facilitator
 
-| Variable | Description | Testnet example |
-| --- | --- | --- |
-| `X402_FACILITATOR_URL` | Base URL of the x402 facilitator used to verify/settle payments. | `https://x402.org/facilitator` |
-| `X402_NETWORK` | Network identifier passed to the facilitator. | `base-sepolia` |
-| `X402_PAYEE_ADDRESS` | Address that receives settled payments. | `0xYourTestnetPayee...` |
-| `X402_FACILITATOR_API_KEY` | *(optional)* API key if your facilitator requires one. | *(empty for public testnet facilitator)* |
+| Variable                   | Description                                                      | Testnet example                          |
+| -------------------------- | ---------------------------------------------------------------- | ---------------------------------------- |
+| `X402_FACILITATOR_URL`     | Base URL of the x402 facilitator used to verify/settle payments. | `https://x402.org/facilitator`           |
+| `X402_NETWORK`             | Network identifier passed to the facilitator.                    | `base-sepolia`                           |
+| `X402_PAYEE_ADDRESS`       | Address that receives settled payments.                          | `0xYourTestnetPayee...`                  |
+| `X402_FACILITATOR_API_KEY` | _(optional)_ API key if your facilitator requires one.           | _(empty for public testnet facilitator)_ |
 
 ### Provider Registration / Paid Proxy
 
-| Variable | Description | Testnet example |
-| --- | --- | --- |
-| `PROVIDER_REGISTRY_ENABLED` | Enable provider registration endpoints. | `true` |
-| `PROVIDER_REGISTRATION_TOKEN` | Shared secret required to register a provider. | *(random 32 hex chars)* |
-| `PROXY_TIMEOUT_MS` | Upstream request timeout for the paid proxy. | `30000` |
-| `PROXY_MAX_BODY_BYTES` | Max request body size accepted by the proxy. | `1048576` |
-| `ALLOWED_ORIGINS` | Comma-separated CORS origins for the web app. | `https://your-web-app.example.com` |
+| Variable                      | Description                                    | Testnet example                    |
+| ----------------------------- | ---------------------------------------------- | ---------------------------------- |
+| `PROVIDER_REGISTRY_ENABLED`   | Enable provider registration endpoints.        | `true`                             |
+| `PROVIDER_REGISTRATION_TOKEN` | Shared secret required to register a provider. | _(random 32 hex chars)_            |
+| `PROXY_TIMEOUT_MS`            | Upstream request timeout for the paid proxy.   | `30000`                            |
+| `PROXY_MAX_BODY_BYTES`        | Max request body size accepted by the proxy.   | `1048576`                          |
+| `ALLOWED_ORIGINS`             | Comma-separated CORS origins for the web app.  | `https://your-web-app.example.com` |
 
 ### Web App (build-time)
 
 These are consumed by the static web app at build time, not by the server:
 
-| Variable | Description | Testnet example |
-| --- | --- | --- |
+| Variable            | Description                        | Testnet example                          |
+| ------------------- | ---------------------------------- | ---------------------------------------- |
 | `VITE_API_BASE_URL` | Public URL of the deployed server. | `https://zentrixpay-server.onrender.com` |
-| `VITE_CHAIN_ID` | Chain ID shown in the UI. | `84532` |
-| `VITE_X402_NETWORK` | Network label shown in the UI. | `base-sepolia` |
+| `VITE_CHAIN_ID`     | Chain ID shown in the UI.          | `84532`                                  |
+| `VITE_X402_NETWORK` | Network label shown in the UI.     | `base-sepolia`                           |
 
 > Generate secrets with `openssl rand -hex 32`. Never commit them.
 
@@ -109,11 +109,17 @@ pnpm run migrate
 
 If your repo uses a different script name, check `package.json` for `migrate`, `db:migrate`, or `prisma migrate deploy`.
 
+### GitHub Actions
+
+The deploy workflow runs `pnpm db:migrate` before triggering the server deploy. Add
+`DATABASE_URL` as a secret to each GitHub Environment used for deployment; a
+missing secret or failed migration stops the deploy.
+
 ### On the host
 
 Add the migration command as a **release/pre-deploy command** so it runs on every deploy:
 
-- **Render:** set the *Pre-Deploy Command* to `pnpm run migrate`.
+- **Render:** set the _Pre-Deploy Command_ to `pnpm run migrate`.
 - **Fly.io:** add a `release_command` to `fly.toml` (see step 4).
 
 ---
@@ -129,7 +135,7 @@ Add the migration command as a **release/pre-deploy command** so it runs on ever
    - **Start Command:** `pnpm run start`
    - **Pre-Deploy Command:** `pnpm run migrate`
    - **Health Check Path:** `/health`
-3. Add every variable from **Section 2** under *Environment*.
+3. Add every variable from **Section 2** under _Environment_.
 4. Deploy. Render injects `PORT` automatically.
 
 ### Option B — Fly.io
@@ -245,7 +251,7 @@ pnpm install && pnpm run build
    - **Root Directory:** `web`
    - **Build Command:** `pnpm install && pnpm run build`
    - **Publish Directory:** `dist`
-3. Add `VITE_API_BASE_URL`, `VITE_CHAIN_ID`, `VITE_X402_NETWORK` under *Environment*.
+3. Add `VITE_API_BASE_URL`, `VITE_CHAIN_ID`, `VITE_X402_NETWORK` under _Environment_.
 4. Deploy, then copy the resulting URL into the server's `ALLOWED_ORIGINS` and redeploy the server.
 
 ### Netlify / Vercel / Cloudflare Pages
@@ -276,14 +282,14 @@ If every box is checked, your testnet instance is live.
 
 ## 8. Troubleshooting
 
-| Symptom | Likely cause | Fix |
-| --- | --- | --- |
-| `500` on `/health` | DB unreachable | Check `DATABASE_URL` and SSL mode. |
-| Migrations fail on deploy | Pre-deploy/release command missing | Add `pnpm run migrate` as pre-deploy (Render) or `release_command` (Fly). |
-| `402` never returned | Proxy or facilitator misconfigured | Verify `X402_FACILITATOR_URL`, `X402_NETWORK`, `X402_PAYEE_ADDRESS`. |
-| CORS errors in browser | `ALLOWED_ORIGINS` mismatch | Set it to the exact web app origin and redeploy the server. |
-| Provider registration `401` | Wrong/missing token | Send `Authorization: Bearer $PROVIDER_REGISTRATION_TOKEN`. |
-| Web app shows wrong network | `VITE_*` not set at build time | Set them and rebuild the static site. |
+| Symptom                     | Likely cause                       | Fix                                                                       |
+| --------------------------- | ---------------------------------- | ------------------------------------------------------------------------- |
+| `500` on `/health`          | DB unreachable                     | Check `DATABASE_URL` and SSL mode.                                        |
+| Migrations fail on deploy   | Pre-deploy/release command missing | Add `pnpm run migrate` as pre-deploy (Render) or `release_command` (Fly). |
+| `402` never returned        | Proxy or facilitator misconfigured | Verify `X402_FACILITATOR_URL`, `X402_NETWORK`, `X402_PAYEE_ADDRESS`.      |
+| CORS errors in browser      | `ALLOWED_ORIGINS` mismatch         | Set it to the exact web app origin and redeploy the server.               |
+| Provider registration `401` | Wrong/missing token                | Send `Authorization: Bearer $PROVIDER_REGISTRATION_TOKEN`.                |
+| Web app shows wrong network | `VITE_*` not set at build time     | Set them and rebuild the static site.                                     |
 
 ---
 

@@ -127,6 +127,7 @@ export default function App() {
     <Routes>
       <Route path="/apis/:id" element={<ApiDetailPage />} />
       <Route path="/*" element={<MainLayout />} />
-    </Routes>
+      <Route path="/status/:apiId" element={<div className="p-8">API Status Page (placeholder)</div>} />
+</Routes>
   );
 }

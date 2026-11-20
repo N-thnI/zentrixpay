@@ -219,4 +219,38 @@ export const apiPasses = pgTable(
   }),
 );
 
+export const proxyIdempotency = pgTable(
+  "proxy_idempotency",
+  {
+    apiId: integer("api_id")
+      .notNull()
+      .references(() => apis.id, { onDelete: "cascade" }),
+    payer: text("payer").notNull(),
+    key: text("idempotency_key").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    state: text("state").$type<"in_progress" | "completed">().notNull(),
+    paymentHash: text("payment_hash"),
+    response: jsonb("response").$type<{
+      status: number;
+      headers: Record<string, string | string[]>;
+      body: string;
+    } | null>(),
+    txHash: text("tx_hash"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    keyIdx: uniqueIndex("proxy_idempotency_api_payer_key_idx").on(
+      table.apiId,
+      table.payer,
+      table.key,
+    ),
+    expiresAtIdx: index("proxy_idempotency_expires_at_idx").on(table.expiresAt),
+    validState: check(
+      "proxy_idempotency_state_check",
+      sql`${table.state} in ('in_progress', 'completed')`,
+    ),
+  }),
+);
+
 export type ApiPassRow = typeof apiPasses.$inferSelect;

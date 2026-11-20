@@ -90,8 +90,8 @@ const envSchema = z.object({
   // Default and ceiling for a single upstream call. Kept under REQUEST_TIMEOUT_MS.
   PROXY_DEFAULT_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   PROXY_MAX_TIMEOUT_MS: z.coerce.number().int().positive().default(25_000),
-  // Idempotency-Key replay for paid calls: how long a charged response is kept,
-  // how many are kept (oldest evicted first) and the largest body kept.
+  // Idempotency-Key replay for paid calls: record lifetime and largest cached
+  // response. The entry-count limit applies to the in-memory test store only.
   PROXY_IDEMPOTENCY_TTL_MS: z.coerce.number().int().positive().default(3_600_000),
   PROXY_IDEMPOTENCY_MAX_ENTRIES: z.coerce.number().int().positive().default(1000),
   PROXY_IDEMPOTENCY_MAX_BODY_BYTES: z.coerce

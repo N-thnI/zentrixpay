@@ -154,3 +154,76 @@ export function publicOpenApiSpec(spec: Json, upstreamUrl: string, proxyUrl: str
 
   return scrubStrings(doc, upstream, proxyUrl) as Json;
 }
+
+
+export interface OpenApiImportOperation {
+  method: string;
+  path: string;
+  operationId: string | null;
+  summary: string | null;
+  tags: string[];
+}
+
+export interface OpenApiImportGroup {
+  key: string;
+  name: string;
+  serverUrl: string;
+  tags: string[];
+  operations: OpenApiImportOperation[];
+  spec: Json;
+}
+
+function operationEntries(spec: Json): OpenApiImportOperation[] {
+  const paths = isObject(spec.paths) ? spec.paths : {};
+  const result: OpenApiImportOperation[] = [];
+  for (const [path, item] of Object.entries(paths)) {
+    if (!isObject(item)) continue;
+    for (const method of HTTP_OPERATIONS) {
+      const operation = item[method];
+      if (!isObject(operation)) continue;
+      const tags = Array.isArray(operation.tags) ? operation.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0) : [];
+      result.push({ method: method.toUpperCase(), path, operationId: typeof operation.operationId === "string" ? operation.operationId : null, summary: typeof operation.summary === "string" ? operation.summary : null, tags });
+    }
+  }
+  return result;
+}
+
+function subsetSpec(spec: Json, operations: OpenApiImportOperation[], serverUrl: string): Json {
+  const paths: Json = {};
+  for (const operation of operations) {
+    const source = isObject(spec.paths) && isObject(spec.paths[operation.path]) ? spec.paths[operation.path] : {};
+    paths[operation.path] ??= {};
+    (paths[operation.path] as Json)[operation.method.toLowerCase()] = source[operation.method.toLowerCase()];
+  }
+  return { openapi: spec.openapi, info: spec.info, servers: [{ url: serverUrl }], paths };
+}
+
+export function groupOpenApiOperations(spec: Json): OpenApiImportGroup[] {
+  const servers = Array.isArray(spec.servers) ? spec.servers.map(serverUrl).filter((value): value is string => Boolean(value)) : [];
+  const serverUrlValue = servers[0] ?? "";
+  const operations = operationEntries(spec);
+  const groups = new Map<string, OpenApiImportOperation[]>();
+  for (const operation of operations) {
+    const keys = operation.tags.length > 0 ? operation.tags : [serverUrlValue || "default"];
+    for (const key of keys) groups.set(key, [...(groups.get(key) ?? []), operation]);
+  }
+  return [...groups.entries()].map(([key, grouped]) => ({
+    key,
+    name: key === serverUrlValue ? "Imported API" : key,
+    serverUrl: serverUrlValue,
+    tags: key === serverUrlValue ? [] : [key.toLowerCase()],
+    operations: grouped,
+    spec: subsetSpec(spec, grouped, serverUrlValue),
+  }));
+}
+
+export function previewOpenApiImport(input: string | Json): { groups: OpenApiImportGroup[]; errors: string[] } {
+  try {
+    const spec = parseOpenApiSpec(input);
+    const groups = groupOpenApiOperations(spec);
+    const errors = groups.flatMap((group) => group.serverUrl ? [] : [`${group.key}: document has no usable server URL`]);
+    return { groups, errors };
+  } catch (error) {
+    return { groups: [], errors: [error instanceof Error ? error.message : "Invalid OpenAPI document"] };
+  }
+}

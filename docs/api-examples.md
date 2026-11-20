@@ -173,6 +173,18 @@ curl -i $BASE/api/$API_ID/current?city=Lagos
 
 Without payment the gateway answers `402 Payment Required` with the price and payee in the `PAYMENT-REQUIRED` header. Use an x402 client to pay and retry automatically — see [Calling ZentrixPay APIs from JavaScript](call-from-javascript.md).
 
+### Bulk OpenAPI import
+
+Providers can preview and then confirm groups of operations from an OpenAPI 3 JSON or YAML document. Both endpoints require `x-api-key`; the document may be sent as JSON (`document` or `openapiSpec`) or as a multipart file field named `document`.
+
+```bash
+curl -s -X POST $BASE/apis/import/preview -H "x-api-key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  --data-binary "{\"document\":$(jq -Rs . openapi.yaml)}" | jq .
+```
+
+The preview response is `{ "groups": [{ "key", "name", "serverUrl", "tags", "operations", "spec" }], "errors": [] }`. Operations are grouped by tag, with untagged operations grouped under the document server. Confirm selected group keys with `POST /apis/import` and `{ "document": <text>, "groups": ["tag"], "defaults": { "price": "0.01", "walletAddress": "G...", "description": "..." } }`. The response is `{ "imported": [...], "skipped": [...] }`; repeated confirmations are idempotent and all new groups are inserted transactionally. The Provider Dashboard uses the same preview/confirm flow without displaying or returning upstream secrets.
+
 ### Receipts for a payer
 
 ```bash

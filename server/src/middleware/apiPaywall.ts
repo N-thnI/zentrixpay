@@ -86,6 +86,17 @@ export async function checkPayerAccess(
     return;
   }
 
+  // Sandbox mode: if the request includes the provider's secret key, bypass payment.
+  // The provider key is stored on the API row (e.g., `providerKey`).
+  // This allows the API owner to test their endpoint without incurring charges.
+  const providerKey = (api as any).providerKey;
+  const headerKey = typeof req.headers['x-provider-key'] === 'string' ? req.headers['x-provider-key'] as string : undefined;
+  if (providerKey && headerKey && headerKey === providerKey) {
+    // Mark the request as an owner sandbox call for downstream stats handling.
+    (res.locals as any).ownerSandbox = true;
+    return next();
+  }
+
   // Derive the payer address from the payment header (may be absent on the
   // first unanswered 402 challenge).
   const header = paymentHeader(req);

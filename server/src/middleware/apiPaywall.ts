@@ -7,7 +7,6 @@ import type { ApiRow } from '../db/schema.js';
 import { config } from '../config.js';
 import { paymentHeader, payerFromPayment } from '../lib/payer.js';
 import { sharedX402ResourceServer } from '../lib/x402.js';
-import { payerFromPayment, paymentHeader } from '../lib/payer.js';
 import { getLogger } from '../lib/logger.js';
 
 export interface ApiPaywallOptions {
@@ -25,13 +24,49 @@ export interface ApiPaywallOptions {
 const middlewareCache = new Map<string, ReturnType<typeof buildMiddleware>>();
 
 function buildMiddleware(api: ApiRow, options: ApiPaywallOptions) {
-  const price = options.price ?? api.price ?? '$0.01';
+  let price = options.price ?? api.price ?? '$0.01';
   const network = options.network ?? config.NETWORK;
   const payTo = api.walletAddress;
 
   const router = Router();
 
   router.use(async (req: Request, res: Response, next: NextFunction) => {
+    // Determine payer from payment header
+    const payer = payerFromPayment(req.headers[paymentHeader]);
+    // If the API defines tiered price rules, compute the price based on usage this month
+    if (api.price_rules && Array.isArray(api.price_rules) && api.price_rules.length > 0 && payer) {
+      try {
+        // Count calls for this payer and API in the current calendar month
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const [{ count }] = await db.select({ count: sql<number>`count(*)` })
+          .from(apiCalls)
+          .where(
+            and(
+              eq(apiCalls.apiId, api.id),
+              eq(apiCalls.payer, payer),
+              gt(apiCalls.createdAt, monthStart)
+            )
+          );
+        // Find the appropriate tier
+        const sortedRules = [...api.price_rules].sort((a: any, b: any) => (a.upTo ?? Infinity) - (b.upTo ?? Infinity));
+        for (const rule of sortedRules) {
+          const limit = rule.upTo ?? Infinity;
+          if (count < limit) {
+            price = rule.price;
+            break;
+          }
+        }
+        // If no rule matched, use the last rule's price
+        if (!price) {
+          price = sortedRules[sortedRules.length - 1].price;
+        }
+      } catch (e) {
+        // If tier calculation fails, fall back to default price
+        console.error('Tier pricing calculation error:', e);
+      }
+    }
+    try {
     try {
       const resourceServer = await sharedX402ResourceServer({
         network,
